@@ -25,6 +25,7 @@ docker run -d \
   --restart unless-stopped \
   -v /var/tmp/yt_dw:/var/tmp/yt_dw \
   -e TELEGRAM_TOKEN="<token>" \
+  -e TELEGRAM_ADMIN_IDS="<admin_id_1>,<admin_id_2>" \
   ghcr.io/drsdgdbye/yt_dw:latest
 ```
 
