@@ -75,15 +75,21 @@ if [[ -n "$DENO_PATH" && -x "$DENO_PATH" ]]; then
         debug "ВНИМАНИЕ: для скачивания видео из Youtube требуется установленный js runtime. Например, Deno"
 fi
 
-yt-dlp \
+sim_out="$(yt-dlp \
     --simulate --skip-download --quiet --no-warnings \
     --cookies "${COOKIES_FILE}" \
     --js-runtimes "deno:${DENO_PATH}" \
     --socket-timeout "${SOCKET_TIMEOUT}" \
     --retries "${RETRIES}" \
+    --no-playlist \
     -o '%(id)s.%(ext)s' \
     --print "[ID]: %(id)s.%(ext)s" \
-    "${URL}"
+    "${URL}")"
+
+printf '%s\n' "${sim_out}"
+
+VID_ID="$(printf '%s\n' "${sim_out}" | sed -nE 's/^\[ID\]: (.*)\.[^.]+$/\1/p' | head -n1)"
+[[ -n "${VID_ID}" ]] || die "Не удалось определить ID видео."
 
 # Формат: предпочитаем h264 ≤720p, далее любой ≤720p, затем любой best.
 # Для наличия ffmpeg пробуем мердж в mp4, если совместимо.
@@ -96,10 +102,15 @@ else
   MERGE_ARGS=()
 fi
 
-MAX_SIZE_MB=50M
+MAX_SIZE_MB=50
+MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
+
+# Убираем остатки предыдущих попыток для этого видео
+rm -f "${SAVE_DIR}/${VID_ID}".*.part "${SAVE_DIR}/${VID_ID}".*.ytdl "${SAVE_DIR}/${VID_ID}".*.temp
 
 info "Скачиваю..."
 
+rc=0
 yt-dlp \
   -f "${FORMAT}" \
   "${MERGE_ARGS[@]}" \
@@ -108,10 +119,42 @@ yt-dlp \
   --no-playlist \
   --quiet \
   --no-warnings \
-  --max-filesize "${MAX_SIZE_MB}" \
+  --max-filesize "${MAX_SIZE_MB}M" \
   --retries "${RETRIES}" \
   --fragment-retries "${FRAG_RETRIES}" \
   --socket-timeout "${SOCKET_TIMEOUT}" \
   --concurrent-fragments "${CONCURRENT_FRAG}" \
   -o "${SAVE_DIR}/%(id)s.%(ext)s" \
-  "${URL}"
+  "${URL}" || rc=$?
+
+if [[ "${rc}" -ne 0 ]]; then
+  rm -f "${SAVE_DIR}/${VID_ID}".*
+  die "yt-dlp завершился с ошибкой (код ${rc}). Остатки для ${VID_ID} удалены." "${rc}"
+fi
+
+total=0
+for f in "${SAVE_DIR}/${VID_ID}".*; do
+  [[ -e "${f}" ]] || continue
+  total=$((total + $(stat -c '%s' "${f}") ))
+done
+
+if (( total == 0 )); then
+  die "Файл для ${VID_ID} не скачан: превышен лимит ${MAX_SIZE_MB}MB или источник не отдал видео."
+fi
+
+if (( total > MAX_SIZE_BYTES )); then
+  rm -f "${SAVE_DIR}/${VID_ID}".*
+  die "Скачанные файлы для ${VID_ID} превышают лимит ${MAX_SIZE_MB}MB (${total} байт). Удалены."
+fi
+
+leftover=""
+for f in "${SAVE_DIR}/${VID_ID}".*.part "${SAVE_DIR}/${VID_ID}".*.ytdl "${SAVE_DIR}/${VID_ID}".*.temp; do
+  if [[ -e "${f}" ]]; then
+    leftover=1
+    break
+  fi
+done
+if [[ -n "${leftover}" ]]; then
+  rm -f "${SAVE_DIR}/${VID_ID}".*
+  die "Скачивание для ${VID_ID} не завершено (остались временные файлы). Удалены."
+fi
