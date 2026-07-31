@@ -28,34 +28,49 @@ RUN mkdir -p /out/rt/script && \
     fi
 
 # ============================================================
-# Stage 2: Runtime
+# Stage 2: Downloads (binaries only, not shipped)
 # ============================================================
-FROM ubuntu:24.04
-
-ENV DEBIAN_FRONTEND=noninteractive
+FROM debian:12-slim AS downloads
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        ffmpeg \
-        python3 \
-        pipx \
-        unzip && \
-    rm -rf /var/lib/apt/lists/*
+        unzip \
+        xz-utils && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /dl/.deno/bin
 
-# -------------------------
-# yt-dlp
-# -------------------------
+# yt-dlp (standalone binary, no python needed)
 RUN curl -L \
-    https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-    -o /usr/local/bin/yt-dlp && \
-    chmod +x /usr/local/bin/yt-dlp
+    https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+    -o /dl/yt-dlp && \
+    chmod +x /dl/yt-dlp
 
-# -------------------------
-# Deno
-# -------------------------
-RUN curl -fsSL https://deno.land/install.sh | sh
+# Deno — ставим в /root/.deno/bin/deno (путь, который ждёт yt_dw.sh)
+RUN curl -fsSL https://deno.land/install.sh | sh && \
+    cp /root/.deno/bin/deno /dl/.deno/bin/deno
+
+# ffmpeg (static build, glibc)
+RUN curl -L \
+    https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+    -o /tmp/ffmpeg.tar.xz && \
+    tar -xJf /tmp/ffmpeg.tar.xz \
+        -C /dl \
+        --strip-components=1 \
+        --wildcards '*/ffmpeg'
+
+# ============================================================
+# Stage 3: Runtime
+# ============================================================
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # -------------------------
 # Temporary storage
@@ -69,6 +84,10 @@ VOLUME ["/var/tmp/yt_dw"]
 # -------------------------
 RUN mkdir -p /app
 WORKDIR /app
+
+COPY --from=downloads /dl/yt-dlp /usr/local/bin/yt-dlp
+COPY --from=downloads /dl/.deno/bin/deno /root/.deno/bin/deno
+COPY --from=downloads /dl/ffmpeg /usr/local/bin/ffmpeg
 
 COPY --from=builder /out/app ./app
 COPY --from=builder /out/rt/application.yaml ./application.yaml
