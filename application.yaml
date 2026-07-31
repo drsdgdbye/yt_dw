@@ -1,0 +1,6 @@
+telegram:
+  token: ""
+  admin_ids: []
+log:
+  level: "debug"
+  format: "text"

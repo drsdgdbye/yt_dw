@@ -1,0 +1,7 @@
+.git/
+.gitignore
+.idea/
+*.md
+coverage.out
+application.dev.yaml
+/script/cookies.txt

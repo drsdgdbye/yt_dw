@@ -1,0 +1,75 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VDS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VDS_HOST }}
+          username: ${{ secrets.VDS_USER }}
+          key: ${{ secrets.VDS_SSH_KEY }}
+          envs: TELEGRAM_TOKEN,GHCR_PAT,REPO,ACTOR,TELEGRAM_ADMIN_IDS
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          TELEGRAM_ADMIN_IDS: ${{ secrets.TELEGRAM_ADMIN_IDS }}
+        script: |
+          echo "$GHCR_PAT" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker pull "ghcr.io/${REPO}:latest"
+          docker stop yt_dw || true
+          docker rm yt_dw || true
+          docker run -d \
+            --name yt_dw \
+            --restart unless-stopped \
+            -v /var/tmp/yt_dw:/var/tmp/yt_dw \
+            -v /var/tmp/yt_dw/cookies.txt:/app/script/cookies.txt:ro \
+            -e TELEGRAM_TOKEN \
+            -e TELEGRAM_ADMIN_IDS \
+            "ghcr.io/${REPO}:latest"

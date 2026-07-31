@@ -1,0 +1,9 @@
+# IDE
+.idea/
+
+# Tests
+coverage.out
+
+# Secrets
+application.dev.yaml
+/script/cookies.txt
