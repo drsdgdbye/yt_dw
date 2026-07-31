@@ -63,7 +63,7 @@ jobs:
               --name yt_dw \
               --restart unless-stopped \
               -v /var/tmp/yt_dw:/var/tmp/yt_dw \
-              -v /var/tmp/yt_dw/cookies.txt:/app/script/cookies.txt:ro \
+              -v /var/tmp/yt_dw/cookies.txt:/app/script/cookies.txt \
               -e TELEGRAM_TOKEN \
               -e TELEGRAM_ADMIN_IDS \
               "ghcr.io/${REPO}:latest"

@@ -40,9 +40,11 @@ Required (one of two):
 Optional:
 
 - `script/cookies.txt` — 18+ / authenticated content (permissions 600).
-  In the container it is mounted read-only from the server:
+  In the container it is mounted from the server (read-write, yt-dlp updates it):
   place the file on the VDS at `/var/tmp/yt_dw/cookies.txt`
   (e.g. `scp script/cookies.txt user@host:/var/tmp/yt_dw/cookies.txt`).
+  Note: the container runs as root, so after the first write the file on the
+  host becomes root-owned — update it via `sudo`.
 - script env vars: `SAVE_DIR`, `RETRIES`, `FRAG_RETRIES`, `MAX_SIZE_MB`, etc.
 - `log.level` / `log.format` in `application.yaml`
 
