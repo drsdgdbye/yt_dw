@@ -31,6 +31,23 @@ docker run -d \
 
 Image tags: `latest`, `sha-<commit>`.
 
+## Dev build
+
+Dev image bakes in secrets from `application.dev.yaml` and cookies from
+`script/cookies.txt` (both gitignored, so never shipped to prod).
+
+```bash
+docker build --build-arg PROFILE=dev -t yt_dw:dev .
+docker run -d \
+  --name yt_dw-dev \
+  -v /var/tmp/yt_dw:/var/tmp/yt_dw \
+  yt_dw:dev
+```
+
+Prod build (default, `--build-arg PROFILE=prod` or no flag) keeps the current
+behavior: empty `application.yaml`, secrets via env, cookies from the mounted
+`/var/tmp/yt_dw/cookies.txt`.
+
 ## Configuration
 
 Required (one of two):

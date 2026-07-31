@@ -3,6 +3,8 @@
 # ============================================================
 FROM golang:1.26 AS builder
 
+ARG PROFILE=prod
+
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -14,6 +16,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build \
         -ldflags="-s -w" \
         -o /out/app .
+
+# Подготовка рантайм-файлов под профиль
+RUN mkdir -p /out/rt/script && \
+    cp script/yt_dw.sh /out/rt/script/yt_dw.sh && \
+    if [ "${PROFILE}" = "dev" ]; then \
+        cp application.dev.yaml /out/rt/application.yaml && \
+        cp script/cookies.txt /out/rt/script/cookies.txt; \
+    else \
+        cp application.yaml /out/rt/application.yaml; \
+    fi
 
 # ============================================================
 # Stage 2: Runtime
@@ -59,7 +71,7 @@ RUN mkdir -p /app
 WORKDIR /app
 
 COPY --from=builder /out/app ./app
-COPY --from=builder /src/application.yaml ./application.yaml
-COPY --from=builder /src/script/ ./script/
+COPY --from=builder /out/rt/application.yaml ./application.yaml
+COPY --from=builder /out/rt/script/ ./script/
 
 ENTRYPOINT ["/app/app"]
