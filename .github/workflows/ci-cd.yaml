@@ -54,22 +54,22 @@ jobs:
           username: ${{ secrets.VDS_USER }}
           key: ${{ secrets.VDS_SSH_KEY }}
           envs: TELEGRAM_TOKEN,GHCR_PAT,REPO,ACTOR,TELEGRAM_ADMIN_IDS
+          script: |
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$ACTOR" --password-stdin
+            docker pull "ghcr.io/${REPO}:latest"
+            docker stop yt_dw || true
+            docker rm yt_dw || true
+            docker run -d \
+              --name yt_dw \
+              --restart unless-stopped \
+              -v /var/tmp/yt_dw:/var/tmp/yt_dw \
+              -v /var/tmp/yt_dw/cookies.txt:/app/script/cookies.txt:ro \
+              -e TELEGRAM_TOKEN \
+              -e TELEGRAM_ADMIN_IDS \
+              "ghcr.io/${REPO}:latest"
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
           TELEGRAM_ADMIN_IDS: ${{ secrets.TELEGRAM_ADMIN_IDS }}
-        script: |
-          echo "$GHCR_PAT" | docker login ghcr.io -u "$ACTOR" --password-stdin
-          docker pull "ghcr.io/${REPO}:latest"
-          docker stop yt_dw || true
-          docker rm yt_dw || true
-          docker run -d \
-            --name yt_dw \
-            --restart unless-stopped \
-            -v /var/tmp/yt_dw:/var/tmp/yt_dw \
-            -v /var/tmp/yt_dw/cookies.txt:/app/script/cookies.txt:ro \
-            -e TELEGRAM_TOKEN \
-            -e TELEGRAM_ADMIN_IDS \
-            "ghcr.io/${REPO}:latest"
