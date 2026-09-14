@@ -94,11 +94,11 @@ VID_ID="$(printf '%s\n' "${sim_out}" | sed -nE 's/^\[ID\]: (.*)\.[^.]+$/\1/p' | 
 # Формат: предпочитаем h264 ≤720p, далее любой ≤720p, затем любой best.
 # Для наличия ffmpeg пробуем мердж в mp4, если совместимо.
 if [[ "${HAS_FFMPEG}" -eq 1 ]]; then
-  FORMAT="bv*[height<=720][vcodec~='^(avc1|h264)']+ba/b[height<=720][vcodec~='^(avc1|h264)']/bv*[height<=720]+ba/b[height<=720]/b"
+  FORMAT="bv*[height<=720][vcodec~='^(avc1|h264)']+ba/b[height<=720][vcodec~='^(avc1|h264)']/bv*[width<=720][vcodec~='^(avc1|h264)']+ba/b[width<=720][vcodec~='^(avc1|h264)']/bv*[height<=720]+ba/b[height<=720]/bv*[width<=720]+ba/b[width<=720]/bv*[vcodec~='^(avc1|h264)']+ba/b[vcodec~='^(avc1|h264)']/b"
   MERGE_ARGS=(--merge-output-format mp4)
 else
   # Без ffmpeg берём готовый единый поток (предпочт. mp4/h264), затем любой ≤720p, затем best
-  FORMAT="b[height<=720][ext=mp4][vcodec~='^(avc1|h264)']/b[height<=720]/b"
+  FORMAT="b[height<=720][ext=mp4][vcodec~='^(avc1|h264)']/b[width<=720][ext=mp4][vcodec~='^(avc1|h264)']/b[height<=720]/b[width<=720]/b[vcodec~='^(avc1|h264)']/b"
   MERGE_ARGS=()
 fi
 
