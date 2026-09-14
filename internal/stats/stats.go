@@ -22,10 +22,11 @@ var (
 	ErrRenameStatsFile = errors.New("rename stats file")
 )
 
-// ChatStats — статистика по одному чату: успешные и неуспешные обработки.
+// ChatStats — статистика по одному чату: username, успешные и неуспешные обработки.
 type ChatStats struct {
-	Success int64 `json:"success"`
-	Failed  int64 `json:"failed"`
+	Username string `json:"username,omitempty"`
+	Success  int64  `json:"success"`
+	Failed   int64  `json:"failed"`
 }
 
 // Stats — потокоопасная статистика бота с автосохранением в JSON.
@@ -39,6 +40,7 @@ type Stats struct {
 	TotalFailed       int64                `json:"total_failed"`
 	PerChat           map[int64]*ChatStats `json:"per_chat"`
 	TopDomains        map[string]int64     `json:"top_domains"`
+	UserDomains       map[string][]string  `json:"user_domains"`
 	ErrorStats        map[string]int64     `json:"error_stats"`
 	FileSizes         []int64              `json:"file_sizes"`
 	ProcessingTimesMs []int64              `json:"processing_times_ms"`
@@ -50,6 +52,7 @@ func New(savePath string) *Stats {
 		savePath:          savePath,
 		PerChat:           make(map[int64]*ChatStats),
 		TopDomains:        make(map[string]int64),
+		UserDomains:       make(map[string][]string),
 		ErrorStats:        make(map[string]int64),
 		FileSizes:         make([]int64, 0),
 		ProcessingTimesMs: make([]int64, 0),
@@ -72,6 +75,17 @@ func (s *Stats) IncrementProcessed() {
 	s.TotalProcessed++
 }
 
+// TrackChat запоминает username отправителя для чата.
+func (s *Stats) TrackChat(chatID int64, username string) {
+	if username == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.perChat(chatID).Username = username
+}
+
 // IncrementSuccess фиксирует успешную обработку: чат, домен, размер файла, время.
 func (s *Stats) IncrementSuccess(chatID int64, domain string, fileSize, procTimeMs int64) {
 	s.mu.Lock()
@@ -83,6 +97,7 @@ func (s *Stats) IncrementSuccess(chatID int64, domain string, fileSize, procTime
 
 	if domain != "" {
 		s.TopDomains[domain]++
+		s.addUserDomain(chatID, cs.Username, domain)
 	}
 
 	s.FileSizes = append(s.FileSizes, fileSize)
@@ -111,6 +126,25 @@ func (s *Stats) perChat(chatID int64) *ChatStats {
 		s.PerChat[chatID] = cs
 	}
 	return cs
+}
+
+// userKey возвращает ключ пользователя для UserDomains.
+func userKey(chatID int64, username string) string {
+	if username != "" {
+		return "@" + username
+	}
+	return fmt.Sprintf("chat %d", chatID)
+}
+
+// addUserDomain добавляет домен в список пользователя без дублей.
+func (s *Stats) addUserDomain(chatID int64, username, domain string) {
+	key := userKey(chatID, username)
+	for _, d := range s.UserDomains[key] {
+		if d == domain {
+			return
+		}
+	}
+	s.UserDomains[key] = append(s.UserDomains[key], domain)
 }
 
 // Report формирует текст отчёта статистики для отправки в Telegram.
@@ -146,12 +180,16 @@ func (s *Stats) Report() string {
 			if cs == nil {
 				continue
 			}
+			label := fmt.Sprintf("chat %d", id)
+			if cs.Username != "" {
+				label = "@" + cs.Username
+			}
 			chatTotal := cs.Success + cs.Failed
 			var pct float64
 			if chatTotal > 0 {
 				pct = float64(cs.Success) / float64(chatTotal) * 100
 			}
-			b.WriteString(fmt.Sprintf("Chat %d: %d / %d (%.1f%%)\n", id, cs.Success, cs.Failed, pct))
+			b.WriteString(fmt.Sprintf("%s: %d / %d (%.1f%%)\n", label, cs.Success, cs.Failed, pct))
 		}
 	}
 
@@ -172,6 +210,32 @@ func (s *Stats) Report() string {
 		}
 		for _, kv := range sorted[:limit] {
 			b.WriteString(fmt.Sprintf("%s: %d\n", kv.k, kv.v))
+		}
+	}
+
+	if len(s.UserDomains) > 0 {
+		b.WriteString("\n— Домены по пользователям —\n")
+		users := make([]string, 0, len(s.UserDomains))
+		for u := range s.UserDomains {
+			users = append(users, u)
+		}
+		sort.Strings(users)
+		const (
+			maxUsers   = 20
+			maxDomains = 10
+		)
+		for i, u := range users {
+			if i >= maxUsers {
+				break
+			}
+			domains := append([]string(nil), s.UserDomains[u]...)
+			sort.Strings(domains)
+			suffix := ""
+			if len(domains) > maxDomains {
+				domains = domains[:maxDomains]
+				suffix = ", …"
+			}
+			b.WriteString(fmt.Sprintf("%s: %s%s\n", u, strings.Join(domains, ", "), suffix))
 		}
 	}
 
@@ -294,6 +358,9 @@ func (s *Stats) load() {
 	}
 	if s.TopDomains == nil {
 		s.TopDomains = make(map[string]int64)
+	}
+	if s.UserDomains == nil {
+		s.UserDomains = make(map[string][]string)
 	}
 	if s.ErrorStats == nil {
 		s.ErrorStats = make(map[string]int64)

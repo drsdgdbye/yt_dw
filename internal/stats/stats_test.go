@@ -2,6 +2,7 @@ package stats
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,6 +160,7 @@ func TestSaveAndLoad(t *testing.T) {
 	s1 := New(path)
 	s1.IncrementNewChats()
 	s1.IncrementProcessed()
+	s1.TrackChat(1, "vasya")
 	s1.IncrementSuccess(1, "example.com", 100, 500)
 	s1.IncrementFailed(1, "err_type")
 
@@ -182,6 +184,12 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if s2.TopDomains["example.com"] != 1 {
 		t.Errorf("TopDomains: expected 1, got %d", s2.TopDomains["example.com"])
+	}
+	if cs := s2.PerChat[1]; cs == nil || cs.Username != "vasya" {
+		t.Errorf("PerChat username: expected vasya, got %v", cs)
+	}
+	if got := s2.UserDomains["@vasya"]; len(got) != 1 || got[0] != "example.com" {
+		t.Errorf("UserDomains: expected [example.com], got %v", got)
 	}
 	if s2.ErrorStats["err_type"] != 1 {
 		t.Errorf("ErrorStats: expected 1, got %d", s2.ErrorStats["err_type"])
@@ -284,7 +292,7 @@ func TestLoad_CorruptJSON(t *testing.T) {
 
 func TestLoad_NilMaps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nil_maps.json")
-	jsonData := `{"new_chats": 5, "per_chat": null, "top_domains": null, "error_stats": null, "file_sizes": null, "processing_times_ms": null}`
+	jsonData := `{"new_chats": 5, "per_chat": null, "top_domains": null, "user_domains": null, "error_stats": null, "file_sizes": null, "processing_times_ms": null}`
 	if err := os.WriteFile(path, []byte(jsonData), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +305,9 @@ func TestLoad_NilMaps(t *testing.T) {
 	}
 	if s.TopDomains == nil {
 		t.Error("TopDomains should be initialized")
+	}
+	if s.UserDomains == nil {
+		t.Error("UserDomains should be initialized")
 	}
 	if s.ErrorStats == nil {
 		t.Error("ErrorStats should be initialized")
@@ -329,8 +340,8 @@ func TestReport_NilPerChatValues(t *testing.T) {
 	s.PerChat[1] = &ChatStats{Success: 1, Failed: 0}
 	s.PerChat[2] = nil
 	report := s.Report()
-	if !contains(report, "Chat 1") {
-		t.Errorf("expected Chat 1 in report: %s", report)
+	if !contains(report, "chat 1") {
+		t.Errorf("expected chat 1 in report: %s", report)
 	}
 }
 
@@ -412,8 +423,8 @@ func TestReport_MultipleChats(t *testing.T) {
 	}
 	report := s.Report()
 	for id := int64(1); id <= 3; id++ {
-		if !contains(report, "Chat 3") {
-			t.Errorf("expected Chat 3 in report: %s", report)
+		if !contains(report, "chat 3") {
+			t.Errorf("expected chat 3 in report: %s", report)
 		}
 	}
 }
@@ -441,4 +452,81 @@ func TestStartPeriodicSave_ContextCancel(t *testing.T) {
 
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
+}
+
+func TestTrackChat(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "stats.json"))
+	s.TrackChat(1, "vasya")
+	if cs := s.PerChat[1]; cs == nil || cs.Username != "vasya" {
+		t.Fatalf("expected username tracked, got %v", cs)
+	}
+	s.TrackChat(2, "")
+	if _, ok := s.PerChat[2]; ok {
+		t.Error("empty username should not create chat entry")
+	}
+}
+
+func TestIncrementSuccess_UserDomains(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "stats.json"))
+	s.TrackChat(1, "vasya")
+	s.IncrementSuccess(1, "youtube.com", 100, 1000)
+	s.IncrementSuccess(1, "youtube.com", 100, 1000)
+	s.IncrementSuccess(1, "tiktok.com", 100, 1000)
+	s.IncrementSuccess(2, "example.com", 100, 1000)
+
+	if got := s.UserDomains["@vasya"]; len(got) != 2 {
+		t.Errorf("expected 2 unique domains for @vasya, got %v", got)
+	}
+	if got := s.UserDomains["chat 2"]; len(got) != 1 || got[0] != "example.com" {
+		t.Errorf("expected example.com for chat 2, got %v", got)
+	}
+}
+
+func TestReport_Username(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "stats.json"))
+	s.TrackChat(1, "vasya")
+	s.IncrementSuccess(1, "youtube.com", 100, 1000)
+	s.IncrementSuccess(2, "vimeo.com", 100, 1000)
+
+	report := s.Report()
+	if !contains(report, "@vasya: 1 / 0") {
+		t.Errorf("expected @vasya in report: %s", report)
+	}
+	if !contains(report, "chat 2: 1 / 0") {
+		t.Errorf("expected chat 2 fallback in report: %s", report)
+	}
+}
+
+func TestReport_UserDomains(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "stats.json"))
+	s.TrackChat(1, "vasya")
+	s.IncrementSuccess(1, "youtube.com", 100, 1000)
+	s.IncrementSuccess(1, "tiktok.com", 100, 1000)
+
+	report := s.Report()
+	if !contains(report, "— Домены по пользователям —") {
+		t.Errorf("expected user domains section: %s", report)
+	}
+	if !contains(report, "@vasya: tiktok.com, youtube.com") {
+		t.Errorf("expected sorted domains for @vasya: %s", report)
+	}
+}
+
+func TestReport_UserDomainsLimits(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "stats.json"))
+	for i := 0; i < 25; i++ {
+		id := int64(i + 1)
+		s.TrackChat(id, fmt.Sprintf("u%02d", i))
+		for j := 0; j < 12; j++ {
+			s.IncrementSuccess(id, fmt.Sprintf("d%02d.com", j), 100, 1000)
+		}
+	}
+
+	report := s.Report()
+	if !contains(report, "u00: d00.com, d01.com, d02.com, d03.com, d04.com, d05.com, d06.com, d07.com, d08.com, d09.com, …") {
+		t.Errorf("expected domains truncated for u00: %s", report)
+	}
+	if contains(report, "\nu20:") {
+		t.Errorf("expected at most 20 users in report: %s", report)
+	}
 }

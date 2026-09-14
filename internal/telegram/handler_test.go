@@ -568,3 +568,34 @@ func TestHandler_Link_SizeLimit(t *testing.T) {
 		t.Errorf("got size_limit stat %d, want 1", st.ErrorStats["size_limit"])
 	}
 }
+
+func TestHandler_Link_TracksUsername(t *testing.T) {
+	b := &mockBot{
+		sendMessageFn: func(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+			return &models.Message{ID: 1, Chat: models.Chat{ID: 100}}, nil
+		},
+		editMessageTextFn: func(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+			return &models.Message{}, nil
+		},
+		sendVideoFn: func(ctx context.Context, params *bot.SendVideoParams) (*models.Message, error) {
+			return &models.Message{}, nil
+		},
+	}
+	st := stats.New(filepath.Join(t.TempDir(), "stats.json"))
+	h := NewHandler(&mockDownloader{}, &mockFileStore{}, st, nil)
+	h.Link(context.Background(), b, &models.Update{
+		Message: &models.Message{
+			Chat: models.Chat{ID: 100},
+			From: &models.User{ID: 42, Username: "vasya"},
+			Text: "https://youtube.com/watch?v=test",
+		},
+	})
+
+	cs := st.PerChat[100]
+	if cs == nil || cs.Username != "vasya" {
+		t.Fatalf("expected username tracked, got %v", cs)
+	}
+	if got := st.UserDomains["@vasya"]; len(got) != 1 || got[0] != "youtube.com" {
+		t.Errorf("expected [youtube.com] for @vasya, got %v", got)
+	}
+}

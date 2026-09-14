@@ -15,12 +15,12 @@ Telegram-бот (один бинарник, `main.go` в корне): прини
 ## Устройство
 
 - `main.go` собирает цепочку: `config` → `logger` → `downloader.New("script/yt_dw.sh")` → `filestore.New("/var/tmp/yt_dw/")` → `stats.New("/var/tmp/yt_dw/stats.json")` → `telegram.NewHandler(...)` → long-polling `go-telegram/bot` (`/start`, `/stats`, префикс `https://`, default).
-- Пакеты по домену: `internal/downloader` (запуск скрипта), `internal/filestore`, `internal/stats` (JSON, автосейв раз в 30 с и по ctx), `internal/telegram` (handler/client/messages), `internal/validator`, `internal/logger`.
+- Пакеты по домену: `internal/downloader` (запуск скрипта), `internal/filestore`, `internal/stats` (JSON, автосейв раз в 30 с и по ctx; username и домены по юзерам для `/stats`), `internal/telegram` (handler/client/messages), `internal/validator`, `internal/logger`.
 - `telegram.BotClient` — интерфейс для ручных моков (`mock_test.go`); `downloader.Downloader` и `filestore.FileStore` — интерфейсы, которые потребляет `telegram`.
 
 ## Контракт Go ↔ yt_dw.sh
 
-- `downloader` читает stdout построчно: `[INFO]: ...` → callback прогресса (правит сообщение в Telegram), `[ID]: <файл>` → имя файла (побеждает последняя строка), прочее → debug. Со stderr: `[ERROR]: <текст>` → `downloader.ScriptError.Reason` (идёт в чат), `[CODE]: <код>` → `.Code` (идёт в `ErrorStats`), остальные строки → error-лог. Меняя вывод скрипта, обнови парсер и `downloader_test.go`.
+- `downloader` читает stdout построчно: `[INFO]: ...` → callback прогресса (правит сообщение в Telegram), `[ID]: <файл>` → имя файла (побеждает последняя строка), прочее → debug. Со stderr: `[ERROR]: <текст>` → `downloader.ScriptError.Reason` (идёт в чат), `[CODE]: <код>` → `.Code` (идёт в `ErrorStats`), остальные строки → error-лог. Каждая ошибка скрипта помечена кодом (`size_limit`, `video_id_error`, `yt_dlp_error`, …). Меняя вывод скрипта, обнови парсер и `downloader_test.go`.
 - `Handler.sendVideo` жёстко заменяет расширение: `strings.Split(fileName, ".")[0] + ".mp4"`. Имя с точками (кроме расширения) сломает открытие файла.
 - Скрипту нужен `bash`; `ffmpeg` опционален (fallback на готовый поток), deno ищется в `$HOME/.deno/bin/deno`, cookies — жёстко `/app/script/cookies.txt`.
 - Env скрипта: `SAVE_DIR` (по умолчанию `/var/tmp/yt_dw`), `RETRIES`, `FRAG_RETRIES`, `SOCKET_TIMEOUT`, `CONCURRENT_FRAG`. `MAX_SIZE_MB` env не читает: в скрипте жёстко `50`, вопреки README.

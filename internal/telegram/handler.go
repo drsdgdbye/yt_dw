@@ -50,6 +50,7 @@ func (h *Handler) Link(ctx context.Context, b BotClient, update *models.Update) 
 	startTime := time.Now()
 	chatID := update.Message.Chat.ID
 
+	h.stats.TrackChat(chatID, senderUsername(update))
 	h.stats.IncrementProcessed()
 
 	m, sendErr := SendMessageWith(ctx, b, chatID, "Проверяю ссылку...")
@@ -118,6 +119,14 @@ func extractDomain(rawURL string) string {
 		return ""
 	}
 	return parsed.Hostname()
+}
+
+// senderUsername возвращает username отправителя или пустую строку.
+func senderUsername(update *models.Update) string {
+	if update.Message == nil || update.Message.From == nil {
+		return ""
+	}
+	return update.Message.From.Username
 }
 
 // Default — обработчик для обновлений, не подходящих под другие хендлеры.

@@ -5,7 +5,6 @@ err() { echo "[ERROR]: $*" >&2; }
 err_code() { echo "[CODE]: $*" >&2; }
 info() { echo "[INFO]: $*"; }
 debug() { echo "[DEBUG]: $*"; }
-die() { err "$1"; exit "${2:-1}"; }
 die_code() { err "$1"; err_code "$2"; exit "${3:-1}"; }
 
 usage() {
@@ -25,7 +24,7 @@ URL="${1:-}"
 SAVE_DIR="${SAVE_DIR:-/var/tmp/yt_dw}"
 
 # Проверка зависимостей
-command -v yt-dlp >/dev/null 2>&1 || die "Отсутствует yt-dlp" 4
+command -v yt-dlp >/dev/null 2>&1 || die_code "Отсутствует yt-dlp" "missing_yt_dlp" 4
 HAS_FFMPEG=0
 if command -v ffmpeg >/dev/null 2>&1; then
   HAS_FFMPEG=1
@@ -40,7 +39,7 @@ SOCKET_TIMEOUT="${SOCKET_TIMEOUT:-20}"
 CONCURRENT_FRAG="${CONCURRENT_FRAG:-5}"
 
 # Каталог сохранения
-mkdir -p "${SAVE_DIR}" 2>/dev/null || die "Не удалось создать каталог: ${SAVE_DIR}"
+mkdir -p "${SAVE_DIR}" 2>/dev/null || die_code "Не удалось создать каталог: ${SAVE_DIR}" "save_dir_error"
 
 # Хост (информативная проверка)
 HOST="$(printf '%s' "${URL}" | sed -E 's#^[a-zA-Z]+://##' | cut -d/ -f1 | cut -d: -f1 || true)"
@@ -51,7 +50,7 @@ if [[ -n "${HOST}" ]] && command -v ping >/dev/null 2>&1; then
     if ! ping -c 1 -W 2 "${HOST}" >/dev/null 2>&1; then
         info "${HOST} недоступен 😔"
         sleep 1s
-        die "${HOST} недоступен."
+        die_code "${HOST} недоступен." "host_unreachable"
     fi
 fi
 
@@ -91,7 +90,7 @@ sim_out="$(yt-dlp \
 printf '%s\n' "${sim_out}"
 
 VID_ID="$(printf '%s\n' "${sim_out}" | sed -nE 's/^\[ID\]: (.*)\.[^.]+$/\1/p' | head -n1)"
-[[ -n "${VID_ID}" ]] || die "Не удалось определить ID видео."
+[[ -n "${VID_ID}" ]] || die_code "Не удалось определить ID видео." "video_id_error"
 
 # Формат: предпочитаем h264 ≤720p, далее любой ≤720p, затем любой best.
 # Для наличия ffmpeg пробуем мердж в mp4, если совместимо.
@@ -134,7 +133,8 @@ fi
 
 if [[ -n "${EST_BYTES}" ]] && (( EST_BYTES > MAX_SIZE_BYTES )); then
   EST_MB="$(awk -v b="${EST_BYTES}" 'BEGIN { printf "%.1f", b / 1024 / 1024 }')"
-  die_code "Видео не влезет в лимит ${MAX_SIZE_MB}MB: оценка ~${EST_MB}MB (формат ${SEL_FMT:-unknown})." "size_limit"
+  debug "Оценка размера: ~${EST_MB}MB (формат ${SEL_FMT:-unknown})."
+  die_code "Превышен лимит ${MAX_SIZE_MB}MB." "size_limit"
 fi
 
 # Убираем остатки предыдущих попыток для этого видео
@@ -161,7 +161,7 @@ yt-dlp \
 
 if [[ "${rc}" -ne 0 ]]; then
   rm -f "${SAVE_DIR}/${VID_ID}".*
-  die "yt-dlp завершился с ошибкой (код ${rc}). Остатки для ${VID_ID} удалены." "${rc}"
+  die_code "yt-dlp завершился с ошибкой (код ${rc}). Остатки для ${VID_ID} удалены." "yt_dlp_error" "${rc}"
 fi
 
 total=0
@@ -171,12 +171,13 @@ for f in "${SAVE_DIR}/${VID_ID}".*; do
 done
 
 if (( total == 0 )); then
-  die "Файл для ${VID_ID} не скачан: превышен лимит ${MAX_SIZE_MB}MB или источник не отдал видео."
+  die_code "Превышен лимит ${MAX_SIZE_MB}MB." "size_limit"
 fi
 
 if (( total > MAX_SIZE_BYTES )); then
   rm -f "${SAVE_DIR}/${VID_ID}".*
-  die_code "Скачанные файлы для ${VID_ID} превышают лимит ${MAX_SIZE_MB}MB (${total} байт). Удалены." "size_limit"
+  debug "Файл ${VID_ID}: ${total} байт при лимите ${MAX_SIZE_BYTES}."
+  die_code "Превышен лимит ${MAX_SIZE_MB}MB." "size_limit"
 fi
 
 leftover=""
@@ -188,5 +189,5 @@ for f in "${SAVE_DIR}/${VID_ID}".*.part "${SAVE_DIR}/${VID_ID}".*.ytdl "${SAVE_D
 done
 if [[ -n "${leftover}" ]]; then
   rm -f "${SAVE_DIR}/${VID_ID}".*
-  die "Скачивание для ${VID_ID} не завершено (остались временные файлы). Удалены."
+  die_code "Скачивание для ${VID_ID} не завершено (остались временные файлы). Удалены." "incomplete_download"
 fi
