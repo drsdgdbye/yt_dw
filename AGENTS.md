@@ -20,10 +20,11 @@ Telegram-бот (один бинарник, `main.go` в корне): прини
 
 ## Контракт Go ↔ yt_dw.sh
 
-- `downloader` читает stdout построчно: `[INFO]: ...` → callback прогресса (правит сообщение в Telegram), `[ID]: <файл>` → имя файла (побеждает последняя строка), прочее → debug, stderr → error. Меняя вывод скрипта, обнови парсер и `downloader_test.go`.
+- `downloader` читает stdout построчно: `[INFO]: ...` → callback прогресса (правит сообщение в Telegram), `[ID]: <файл>` → имя файла (побеждает последняя строка), прочее → debug. Со stderr: `[ERROR]: <текст>` → `downloader.ScriptError.Reason` (идёт в чат), `[CODE]: <код>` → `.Code` (идёт в `ErrorStats`), остальные строки → error-лог. Меняя вывод скрипта, обнови парсер и `downloader_test.go`.
 - `Handler.sendVideo` жёстко заменяет расширение: `strings.Split(fileName, ".")[0] + ".mp4"`. Имя с точками (кроме расширения) сломает открытие файла.
 - Скрипту нужен `bash`; `ffmpeg` опционален (fallback на готовый поток), deno ищется в `$HOME/.deno/bin/deno`, cookies — жёстко `/app/script/cookies.txt`.
 - Env скрипта: `SAVE_DIR` (по умолчанию `/var/tmp/yt_dw`), `RETRIES`, `FRAG_RETRIES`, `SOCKET_TIMEOUT`, `CONCURRENT_FRAG`. `MAX_SIZE_MB` env не читает: в скрипте жёстко `50`, вопреки README.
+- До загрузки скрипт оценивает размер выбранного формата (`filesize` → `filesize_approx` → `tbr × duration`) и падает с `[CODE]: size_limit`, не качая файл. Для direct-форматов yt-dlp сам отсекает по `Content-Length`, для HLS оценка по `tbr` — единственная защита, `--max-filesize` на HLS не работает.
 
 ## Конфигурация
 

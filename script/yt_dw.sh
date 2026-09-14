@@ -2,9 +2,11 @@
 set -Eeuo pipefail
 
 err() { echo "[ERROR]: $*" >&2; }
+err_code() { echo "[CODE]: $*" >&2; }
 info() { echo "[INFO]: $*"; }
 debug() { echo "[DEBUG]: $*"; }
 die() { err "$1"; exit "${2:-1}"; }
+die_code() { err "$1"; err_code "$2"; exit "${3:-1}"; }
 
 usage() {
   cat >&2 <<USAGE
@@ -105,6 +107,36 @@ fi
 MAX_SIZE_MB=50
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
 
+# Ранняя оценка размера: не качаем, если выбранный формат заведомо больше лимита
+SIZE_INFO="$(yt-dlp \
+    --simulate --skip-download --quiet --no-warnings \
+    -f "${FORMAT}" \
+    "${MERGE_ARGS[@]}" \
+    --cookies "${COOKIES_FILE}" \
+    --js-runtimes "deno:${DENO_PATH}" \
+    --no-playlist \
+    --retries "${RETRIES}" \
+    --socket-timeout "${SOCKET_TIMEOUT}" \
+    --print "[SIZE]: %(format_id)s|%(filesize)s|%(filesize_approx)s|%(tbr)s|%(duration)s" \
+    "${URL}" 2>/dev/null | sed -n 's/^\[SIZE\]: //p' | head -n1)" || SIZE_INFO=""
+
+SEL_FMT="" SEL_FS="" SEL_APPROX="" SEL_TBR="" SEL_DUR=""
+IFS='|' read -r SEL_FMT SEL_FS SEL_APPROX SEL_TBR SEL_DUR <<<"${SIZE_INFO}"
+
+EST_BYTES=""
+if [[ "${SEL_FS}" =~ ^[0-9]+$ ]]; then
+  EST_BYTES="${SEL_FS}"
+elif [[ "${SEL_APPROX}" =~ ^[0-9]+$ ]]; then
+  EST_BYTES="${SEL_APPROX}"
+elif [[ "${SEL_TBR}" =~ ^[0-9]+(\.[0-9]+)?$ && "${SEL_DUR}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  EST_BYTES="$(awk -v tbr="${SEL_TBR}" -v dur="${SEL_DUR}" 'BEGIN { printf "%.0f", tbr * 1000 * dur / 8 }')"
+fi
+
+if [[ -n "${EST_BYTES}" ]] && (( EST_BYTES > MAX_SIZE_BYTES )); then
+  EST_MB="$(awk -v b="${EST_BYTES}" 'BEGIN { printf "%.1f", b / 1024 / 1024 }')"
+  die_code "Видео не влезет в лимит ${MAX_SIZE_MB}MB: оценка ~${EST_MB}MB (формат ${SEL_FMT:-unknown})." "size_limit"
+fi
+
 # Убираем остатки предыдущих попыток для этого видео
 rm -f "${SAVE_DIR}/${VID_ID}".*.part "${SAVE_DIR}/${VID_ID}".*.ytdl "${SAVE_DIR}/${VID_ID}".*.temp
 
@@ -144,7 +176,7 @@ fi
 
 if (( total > MAX_SIZE_BYTES )); then
   rm -f "${SAVE_DIR}/${VID_ID}".*
-  die "Скачанные файлы для ${VID_ID} превышают лимит ${MAX_SIZE_MB}MB (${total} байт). Удалены."
+  die_code "Скачанные файлы для ${VID_ID} превышают лимит ${MAX_SIZE_MB}MB (${total} байт). Удалены." "size_limit"
 fi
 
 leftover=""

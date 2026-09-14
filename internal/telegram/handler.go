@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/url"
 	"os"
@@ -72,7 +73,11 @@ func (h *Handler) Link(ctx context.Context, b BotClient, update *models.Update) 
 		return
 	}
 
-	fileName := h.downloadVideoByLink(ctx, b, chatID, msgID, link)
+	fileName, dlErr := h.downloadVideoByLink(ctx, b, chatID, msgID, link)
+	if dlErr != nil {
+		h.stats.IncrementFailed(chatID, downloadErrorCode(dlErr))
+		return
+	}
 	if fileName == "" {
 		h.stats.IncrementFailed(chatID, "download_error")
 		return
@@ -125,18 +130,36 @@ func (h *Handler) Default(ctx context.Context, b BotClient, update *models.Updat
 }
 
 // downloadVideoByLink запускает скачивание и возвращает имя файла.
-func (h *Handler) downloadVideoByLink(ctx context.Context, b BotClient, chatID int64, msgID int, link string) string {
+func (h *Handler) downloadVideoByLink(ctx context.Context, b BotClient, chatID int64, msgID int, link string) (string, error) {
 	fileName, err := h.downloader.Download(ctx, link, func(info string) {
 		EditMessage(ctx, b, chatID, msgID, info)
 	})
 
 	if err != nil {
-		EditMessage(ctx, b, chatID, msgID, "Что-то пошло не так")
+		EditMessage(ctx, b, chatID, msgID, downloadErrorMessage(err))
 		slog.ErrorContext(ctx, "starting script", "error", err, "chatID", chatID)
-		return ""
+		return "", err
 	}
 
-	return fileName
+	return fileName, nil
+}
+
+// downloadErrorMessage возвращает текст ошибки для чата.
+func downloadErrorMessage(err error) string {
+	var scriptErr *downloader.ScriptError
+	if errors.As(err, &scriptErr) && scriptErr.Reason != "" {
+		return scriptErr.Reason
+	}
+	return "Что-то пошло не так"
+}
+
+// downloadErrorCode возвращает категорию ошибки для статистики.
+func downloadErrorCode(err error) string {
+	var scriptErr *downloader.ScriptError
+	if errors.As(err, &scriptErr) && scriptErr.Code != "" {
+		return scriptErr.Code
+	}
+	return "download_error"
 }
 
 // sendVideo открывает файл, отправляет видео пользователю и обновляет статистику.

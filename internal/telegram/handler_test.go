@@ -368,7 +368,10 @@ func TestHandler_downloadVideoByLink_Success(t *testing.T) {
 		},
 	}
 	h := newTestHandler(t, dl, &mockFileStore{})
-	fn := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	fn, err := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if fn != "result.mp4" {
 		t.Errorf("got %q, want %q", fn, "result.mp4")
 	}
@@ -388,7 +391,10 @@ func TestHandler_downloadVideoByLink_Error(t *testing.T) {
 		},
 	}
 	h := newTestHandler(t, dl, &mockFileStore{})
-	fn := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	fn, err := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	if err == nil {
+		t.Fatal("expected error")
+	}
 	if fn != "" {
 		t.Errorf("got %q, want empty", fn)
 	}
@@ -520,11 +526,45 @@ func TestHandler_downloadVideoByLink_Progress(t *testing.T) {
 		},
 	}
 	h := newTestHandler(t, dl, &mockFileStore{})
-	fn := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	fn, err := h.downloadVideoByLink(context.Background(), b, 100, 1, "https://example.com/video")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if fn != "done.mp4" {
 		t.Errorf("got %q, want %q", fn, "done.mp4")
 	}
 	if len(progressEdits) != 2 || progressEdits[0] != "Загружаю..." || progressEdits[1] != "Конвертирую..." {
 		t.Errorf("got progress edits %v", progressEdits)
+	}
+}
+
+func TestHandler_Link_SizeLimit(t *testing.T) {
+	var edits []string
+	b := &mockBot{
+		sendMessageFn: func(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+			return &models.Message{ID: 1, Chat: models.Chat{ID: 100}}, nil
+		},
+		editMessageTextFn: func(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+			edits = append(edits, params.Text)
+			return &models.Message{}, nil
+		},
+	}
+	reason := "Видео не влезет в лимит 50MB: оценка ~284.1MB."
+	dl := &mockDownloader{
+		downloadFn: func(ctx context.Context, link string, progress func(string)) (string, error) {
+			return "", &downloader.ScriptError{Code: "size_limit", Reason: reason}
+		},
+	}
+	st := stats.New(filepath.Join(t.TempDir(), "stats.json"))
+	h := NewHandler(dl, &mockFileStore{}, st, nil)
+	h.Link(context.Background(), b, &models.Update{
+		Message: &models.Message{Text: "https://de.pornhub.org/view_video.php?viewkey=6a9db14a3c652"},
+	})
+
+	if len(edits) == 0 || edits[len(edits)-1] != reason {
+		t.Errorf("expected reason edit %q, got %v", reason, edits)
+	}
+	if st.ErrorStats["size_limit"] != 1 {
+		t.Errorf("got size_limit stat %d, want 1", st.ErrorStats["size_limit"])
 	}
 }

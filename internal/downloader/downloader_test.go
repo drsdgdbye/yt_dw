@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,5 +167,32 @@ echo "[ID]: big.mp4"
 	}
 	if len(progressMsgs) != 500 {
 		t.Errorf("got %d progress messages, want 500", len(progressMsgs))
+	}
+}
+
+func TestDownload_ScriptError(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "limit.sh", `#!/bin/bash
+echo "[INFO]: Проверяю размер..."
+echo "[ERROR]: Видео не влезет в лимит 50MB: оценка ~284.1MB." >&2
+echo "[CODE]: size_limit" >&2
+exit 1
+`)
+
+	d := New(script)
+	_, err := d.Download(context.Background(), "https://example.com/video", nil)
+	if err == nil {
+		t.Fatal("expected error for failing script")
+	}
+
+	var scriptErr *ScriptError
+	if !errors.As(err, &scriptErr) {
+		t.Fatalf("expected ScriptError, got %T: %v", err, err)
+	}
+	if scriptErr.Code != "size_limit" {
+		t.Errorf("got code %q, want %q", scriptErr.Code, "size_limit")
+	}
+	if scriptErr.Reason != "Видео не влезет в лимит 50MB: оценка ~284.1MB." {
+		t.Errorf("got reason %q", scriptErr.Reason)
 	}
 }
