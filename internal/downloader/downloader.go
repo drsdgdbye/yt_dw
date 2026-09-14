@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Downloader — интерфейс для скачивания видео по ссылке.
@@ -42,9 +43,16 @@ func (d *BashDownloader) Download(ctx context.Context, link string, progress fun
 		return "", err
 	}
 
-	var fileName string
+	var (
+		wg       sync.WaitGroup
+		fileName string
+	)
+
+	wg.Add(2)
 
 	go func() {
+		defer wg.Done()
+
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			s := scanner.Text()
@@ -63,11 +71,15 @@ func (d *BashDownloader) Download(ctx context.Context, link string, progress fun
 	}()
 
 	go func() {
+		defer wg.Done()
+
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			slog.ErrorContext(ctx, scanner.Text())
 		}
 	}()
+
+	wg.Wait()
 
 	if wErr := cmd.Wait(); wErr != nil {
 		return "", wErr

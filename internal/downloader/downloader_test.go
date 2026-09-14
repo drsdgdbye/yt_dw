@@ -143,3 +143,28 @@ echo "[ID]: second.mp4"
 		t.Errorf("got %q, want %q", fn, "second.mp4")
 	}
 }
+
+func TestDownload_ManyProgressMessages(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "many.sh", `#!/bin/bash
+for ((i = 1; i <= 500; i++)); do
+  echo "[INFO]: step $i"
+done
+echo "[ID]: big.mp4"
+`)
+
+	var progressMsgs []string
+	d := New(script)
+	fn, err := d.Download(context.Background(), "https://example.com/video", func(msg string) {
+		progressMsgs = append(progressMsgs, msg)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fn != "big.mp4" {
+		t.Errorf("got %q, want %q", fn, "big.mp4")
+	}
+	if len(progressMsgs) != 500 {
+		t.Errorf("got %d progress messages, want 500", len(progressMsgs))
+	}
+}
