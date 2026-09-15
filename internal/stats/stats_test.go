@@ -502,13 +502,33 @@ func TestReport_UserDomains(t *testing.T) {
 	s.TrackChat(1, "vasya")
 	s.IncrementSuccess(1, "youtube.com", 100, 1000)
 	s.IncrementSuccess(1, "tiktok.com", 100, 1000)
+	s.IncrementSuccess(1, "www.instagram.com", 100, 1000)
 
 	report := s.Report()
 	if !contains(report, "— Домены по пользователям —") {
 		t.Errorf("expected user domains section: %s", report)
 	}
-	if !contains(report, "@vasya: tiktok.com, youtube.com") {
-		t.Errorf("expected sorted domains for @vasya: %s", report)
+	if !contains(report, "@vasya: instagram, tiktok, youtube") {
+		t.Errorf("expected short sorted domains for @vasya: %s", report)
+	}
+}
+
+func TestShortDomain(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"www.instagram.com", "instagram"},
+		{"instagram.com", "instagram"},
+		{"vm.tiktok.com", "tiktok"},
+		{"de.pornhub.org", "pornhub"},
+		{"localhost", "localhost"},
+		{"127.0.0.1", "127.0.0.1"},
+	}
+	for _, tt := range tests {
+		if got := shortDomain(tt.in); got != tt.want {
+			t.Errorf("shortDomain(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -523,7 +543,7 @@ func TestReport_UserDomainsLimits(t *testing.T) {
 	}
 
 	report := s.Report()
-	if !contains(report, "u00: d00.com, d01.com, d02.com, d03.com, d04.com, d05.com, d06.com, d07.com, d08.com, d09.com, …") {
+	if !contains(report, "u00: d00, d01, d02, d03, d04, d05, d06, d07, d08, d09, …") {
 		t.Errorf("expected domains truncated for u00: %s", report)
 	}
 	if contains(report, "\nu20:") {

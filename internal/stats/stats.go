@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -147,6 +148,32 @@ func (s *Stats) addUserDomain(chatID int64, username, domain string) {
 	s.UserDomains[key] = append(s.UserDomains[key], domain)
 }
 
+// shortDomains возвращает уникальные имена доменов без поддоменов и зоны, по алфавиту.
+func shortDomains(domains []string) []string {
+	seen := make(map[string]struct{}, len(domains))
+	short := make([]string, 0, len(domains))
+	for _, d := range domains {
+		name := shortDomain(d)
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		short = append(short, name)
+	}
+	sort.Strings(short)
+
+	return short
+}
+
+// shortDomain убирает поддомены и зону: www.instagram.com -> instagram.
+func shortDomain(domain string) string {
+	parts := strings.Split(domain, ".")
+	if len(parts) < 2 || net.ParseIP(domain) != nil {
+		return domain
+	}
+	return parts[len(parts)-2]
+}
+
 // Report формирует текст отчёта статистики для отправки в Telegram.
 func (s *Stats) Report() string {
 	s.mu.RLock()
@@ -228,8 +255,7 @@ func (s *Stats) Report() string {
 			if i >= maxUsers {
 				break
 			}
-			domains := append([]string(nil), s.UserDomains[u]...)
-			sort.Strings(domains)
+			domains := shortDomains(s.UserDomains[u])
 			suffix := ""
 			if len(domains) > maxDomains {
 				domains = domains[:maxDomains]
