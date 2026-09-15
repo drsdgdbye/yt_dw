@@ -52,6 +52,9 @@ func main() {
 		bot.WithMessageTextHandler("https://", bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			h.Link(ctx, b, update)
 		}),
+		bot.WithCallbackQueryDataHandler("ig:", bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			h.PickMedia(ctx, b, update)
+		}),
 		bot.WithHTTPClient(pollTimeout, &http.Client{
 			Timeout: httpClientTimeout,
 		}),

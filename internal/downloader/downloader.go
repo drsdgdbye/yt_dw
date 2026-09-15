@@ -5,15 +5,26 @@ import (
 	"context"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
 
-// Downloader — интерфейс для скачивания видео по ссылке.
+// Media — элемент поста: номер (1-based) и тип (photo или video).
+type Media struct {
+	Index int
+	Kind  string
+}
+
+// Downloader — интерфейс для скачивания видео и элементов постов.
 type Downloader interface {
 	// Download скачивает видео, возвращает имя файла.
 	// progress вызывается с промежуточными статусами.
 	Download(ctx context.Context, link string, progress func(string)) (string, error)
+	// List возвращает элементы поста (фото и видео).
+	List(ctx context.Context, link string) ([]Media, error)
+	// DownloadItem скачивает элемент поста по его номеру (1-based).
+	DownloadItem(ctx context.Context, link string, index int, progress func(string)) (string, error)
 }
 
 // ScriptError — ошибка bash-скрипта: код для статистики и текст для пользователя.
@@ -48,26 +59,62 @@ func New(scriptPath string) *BashDownloader {
 
 // Download запускает bash-скрипт, парсит stdout на [INFO] и [ID].
 func (d *BashDownloader) Download(ctx context.Context, link string, progress func(string)) (string, error) {
-	cmd := exec.Command("bash", d.scriptPath, link)
+	res, err := d.run(ctx, []string{link}, progress)
+	if err != nil {
+		return "", err
+	}
+
+	return res.fileName, nil
+}
+
+// List возвращает элементы поста, которые отдаёт скрипт.
+func (d *BashDownloader) List(ctx context.Context, link string) ([]Media, error) {
+	res, err := d.run(ctx, []string{"--list", link}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return res.media, nil
+}
+
+// DownloadItem скачивает элемент поста по его номеру (1-based).
+func (d *BashDownloader) DownloadItem(ctx context.Context, link string, index int, progress func(string)) (string, error) {
+	res, err := d.run(ctx, []string{"--item", strconv.Itoa(index), link}, progress)
+	if err != nil {
+		return "", err
+	}
+
+	return res.fileName, nil
+}
+
+// result — разобранный вывод скрипта.
+type result struct {
+	fileName string
+	media    []Media
+}
+
+// run запускает bash-скрипт с аргументами, парсит [INFO], [ID], [MEDIA], [ERROR] и [CODE].
+func (d *BashDownloader) run(ctx context.Context, args []string, progress func(string)) (result, error) {
+	cmd := exec.CommandContext(ctx, "bash", append([]string{d.scriptPath}, args...)...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", err
+		return result{}, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return "", err
+		return result{}, err
 	}
 
 	if err := cmd.Start(); err != nil {
-		return "", err
+		return result{}, err
 	}
 
 	var (
-		wg       sync.WaitGroup
-		fileName string
-		reason   string
-		code     string
+		wg     sync.WaitGroup
+		res    result
+		reason string
+		code   string
 	)
 
 	wg.Add(2)
@@ -78,15 +125,18 @@ func (d *BashDownloader) Download(ctx context.Context, link string, progress fun
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			s := scanner.Text()
-			if strings.HasPrefix(s, "[INFO]") {
-				info := strings.Replace(s, "[INFO]: ", "", 1)
+			switch {
+			case strings.HasPrefix(s, "[INFO]: "):
 				if progress != nil {
-					progress(info)
+					progress(strings.TrimPrefix(s, "[INFO]: "))
 				}
-			} else if strings.HasPrefix(s, "[ID]") {
-				fn := strings.Replace(s, "[ID]: ", "", 1)
-				fileName = fn
-			} else {
+			case strings.HasPrefix(s, "[ID]: "):
+				res.fileName = strings.TrimPrefix(s, "[ID]: ")
+			case strings.HasPrefix(s, "[MEDIA]: "):
+				if m, ok := parseMedia(strings.TrimPrefix(s, "[MEDIA]: ")); ok {
+					res.media = append(res.media, m)
+				}
+			default:
 				slog.DebugContext(ctx, s)
 			}
 		}
@@ -112,10 +162,25 @@ func (d *BashDownloader) Download(ctx context.Context, link string, progress fun
 
 	if wErr := cmd.Wait(); wErr != nil {
 		if reason != "" {
-			return "", &ScriptError{Code: code, Reason: reason, Err: wErr}
+			return result{}, &ScriptError{Code: code, Reason: reason, Err: wErr}
 		}
-		return "", wErr
+		return result{}, wErr
 	}
 
-	return fileName, nil
+	return res, nil
+}
+
+// parseMedia разбирает строку "<номер>|<тип>".
+func parseMedia(raw string) (Media, bool) {
+	parts := strings.SplitN(raw, "|", 2)
+	if len(parts) != 2 {
+		return Media{}, false
+	}
+
+	index, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return Media{}, false
+	}
+
+	return Media{Index: index, Kind: parts[1]}, true
 }

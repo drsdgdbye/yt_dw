@@ -12,4 +12,6 @@ type BotClient interface {
 	SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error)
 	EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error)
 	SendVideo(ctx context.Context, params *bot.SendVideoParams) (*models.Message, error)
+	SendPhoto(ctx context.Context, params *bot.SendPhotoParams) (*models.Message, error)
+	AnswerCallbackQuery(ctx context.Context, params *bot.AnswerCallbackQueryParams) (bool, error)
 }

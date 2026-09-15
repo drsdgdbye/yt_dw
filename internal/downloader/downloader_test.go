@@ -196,3 +196,74 @@ exit 1
 		t.Errorf("got reason %q", scriptErr.Reason)
 	}
 }
+
+func TestList_Success(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "list.sh", `#!/bin/bash
+[[ "${1:-}" == "--list" ]] || { echo "[ERROR]: bad args" >&2; echo "[CODE]: bad_args" >&2; exit 1; }
+echo "[MEDIA]: 1|photo"
+echo "[MEDIA]: 2|video"
+`)
+
+	d := New(script)
+	items, err := d.List(context.Background(), "https://www.instagram.com/p/abc/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2", len(items))
+	}
+	if items[0].Index != 1 || items[0].Kind != "photo" {
+		t.Errorf("got %+v", items[0])
+	}
+	if items[1].Index != 2 || items[1].Kind != "video" {
+		t.Errorf("got %+v", items[1])
+	}
+}
+
+func TestList_ScriptError(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "list_err.sh", `#!/bin/bash
+echo "[ERROR]: Не удалось получить список медиа." >&2
+echo "[CODE]: media_list_error" >&2
+exit 1
+`)
+
+	d := New(script)
+	_, err := d.List(context.Background(), "https://www.instagram.com/p/abc/")
+	if err == nil {
+		t.Fatal("expected error for failing script")
+	}
+
+	var scriptErr *ScriptError
+	if !errors.As(err, &scriptErr) {
+		t.Fatalf("expected ScriptError, got %T: %v", err, err)
+	}
+	if scriptErr.Code != "media_list_error" {
+		t.Errorf("got code %q, want %q", scriptErr.Code, "media_list_error")
+	}
+}
+
+func TestDownloadItem_Photo(t *testing.T) {
+	dir := t.TempDir()
+	script := writeScript(t, dir, "item.sh", `#!/bin/bash
+[[ "${1:-}" == "--item" && "${2:-}" == "2" ]] || { echo "[ERROR]: bad args" >&2; echo "[CODE]: bad_args" >&2; exit 1; }
+echo "[INFO]: Скачиваю фото..."
+echo "[ID]: abc123.jpg"
+`)
+
+	d := New(script)
+	var progressMsgs []string
+	fn, err := d.DownloadItem(context.Background(), "https://www.instagram.com/p/abc/", 2, func(msg string) {
+		progressMsgs = append(progressMsgs, msg)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fn != "abc123.jpg" {
+		t.Errorf("got %q, want %q", fn, "abc123.jpg")
+	}
+	if len(progressMsgs) != 1 || progressMsgs[0] != "Скачиваю фото..." {
+		t.Errorf("got progress %v", progressMsgs)
+	}
+}

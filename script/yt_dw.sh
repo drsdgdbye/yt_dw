@@ -9,8 +9,8 @@ die_code() { err "$1"; err_code "$2"; exit "${3:-1}"; }
 
 usage() {
   cat >&2 <<USAGE
-Usage: $(basename "$0") <url>
-Скачивает видео:
+Usage: $(basename "$0") [--list|--item N] <url>
+Скачивает видео или элемент поста:
 - Папка: ${SAVE_DIR}
 - Разрешение: <=720p (предпочтительно h264, но не строго; есть fallback)
 - Контейнер: mp4 при возможности (без перекодирования)
@@ -18,8 +18,25 @@ Usage: $(basename "$0") <url>
 USAGE
 }
 
-URL="${1:-}"
+MODE="download"
+ITEM=""
+case "${1:-}" in
+  --list)
+    MODE="list"
+    URL="${2:-}"
+    ;;
+  --item)
+    MODE="item"
+    ITEM="${2:-}"
+    URL="${3:-}"
+    ;;
+  *)
+    URL="${1:-}"
+    ;;
+esac
+
 [[ -z "${URL}" ]] && { usage; exit 1; }
+[[ "${MODE}" != "item" || "${ITEM}" =~ ^[1-9][0-9]*$ ]] || die_code "Некорректный номер элемента: ${ITEM}" "item_not_found"
 
 SAVE_DIR="${SAVE_DIR:-/var/tmp/yt_dw}"
 
@@ -76,21 +93,83 @@ if [[ -n "$DENO_PATH" && -x "$DENO_PATH" ]]; then
         debug "ВНИМАНИЕ: для скачивания видео из Youtube требуется установленный js runtime. Например, Deno"
 fi
 
-sim_out="$(yt-dlp \
-    --simulate --skip-download --quiet --no-warnings \
-    --cookies "${COOKIES_FILE}" \
-    --js-runtimes "deno:${DENO_PATH}" \
-    --socket-timeout "${SOCKET_TIMEOUT}" \
-    --retries "${RETRIES}" \
-    --no-playlist \
-    -o '%(id)s.%(ext)s' \
-    --print "[ID]: %(id)s.%(ext)s" \
-    "${URL}")"
+PLAYLIST_ARGS=(--no-playlist)
 
-printf '%s\n' "${sim_out}"
+if [[ "${MODE}" == "list" ]]; then
+  list_exts="$(yt-dlp \
+      --simulate --skip-download --ignore-no-formats-error --quiet --no-warnings \
+      --cookies "${COOKIES_FILE}" \
+      --js-runtimes "deno:${DENO_PATH}" \
+      --socket-timeout "${SOCKET_TIMEOUT}" \
+      --retries "${RETRIES}" \
+      -o '%(id)s.%(ext)s' \
+      --print "%(ext)s" \
+      "${URL}" 2>/dev/null)" || die_code "Не удалось получить список медиа." "media_list_error"
 
-VID_ID="$(printf '%s\n' "${sim_out}" | sed -nE 's/^\[ID\]: (.*)\.[^.]+$/\1/p' | head -n1)"
-[[ -n "${VID_ID}" ]] || die_code "Не удалось определить ID видео." "video_id_error"
+  ITEMS=0
+  while IFS= read -r ITEM_EXT; do
+    [[ -z "${ITEM_EXT}" ]] && continue
+    ITEMS=$((ITEMS + 1))
+    if [[ "${ITEM_EXT}" == "NA" ]]; then
+      printf '[MEDIA]: %d|photo\n' "${ITEMS}"
+    else
+      printf '[MEDIA]: %d|video\n' "${ITEMS}"
+    fi
+  done <<<"${list_exts}"
+
+  if (( ITEMS == 0 )); then
+    die_code "В посте нет медиа." "media_list_error"
+  fi
+  exit 0
+fi
+
+if [[ "${MODE}" == "item" ]]; then
+  item_info="$(yt-dlp \
+      --simulate --skip-download --ignore-no-formats-error --quiet --no-warnings \
+      --cookies "${COOKIES_FILE}" \
+      --js-runtimes "deno:${DENO_PATH}" \
+      --socket-timeout "${SOCKET_TIMEOUT}" \
+      --retries "${RETRIES}" \
+      --playlist-items "${ITEM}" \
+      -o '%(id)s.%(ext)s' \
+      --print "%(ext)s|%(id)s|%(thumbnail)s" \
+      "${URL}" 2>/dev/null | head -n1)" || die_code "Не удалось получить элемент ${ITEM}." "item_not_found"
+
+  ITEM_EXT="" ITEM_ID="" ITEM_THUMB=""
+  IFS='|' read -r ITEM_EXT ITEM_ID ITEM_THUMB <<<"${item_info}"
+  if [[ -z "${ITEM_ID}" || "${ITEM_ID}" == "NA" ]]; then
+    die_code "Элемент ${ITEM} не найден." "item_not_found"
+  fi
+
+  if [[ "${ITEM_EXT}" == "NA" ]]; then
+    command -v curl >/dev/null 2>&1 || die_code "Отсутствует curl" "missing_curl" 4
+    info "Скачиваю фото..."
+    curl -fsSL --max-time 60 -o "${SAVE_DIR}/${ITEM_ID}.jpg" "${ITEM_THUMB}" \
+      || die_code "Не удалось скачать картинку." "photo_download_error"
+    printf '[ID]: %s.jpg\n' "${ITEM_ID}"
+    exit 0
+  fi
+
+  VID_ID="${ITEM_ID}"
+  PLAYLIST_ARGS=(--playlist-items "${ITEM}")
+  printf '[ID]: %s.%s\n' "${ITEM_ID}" "${ITEM_EXT}"
+else
+  sim_out="$(yt-dlp \
+      --simulate --skip-download --quiet --no-warnings \
+      --cookies "${COOKIES_FILE}" \
+      --js-runtimes "deno:${DENO_PATH}" \
+      --socket-timeout "${SOCKET_TIMEOUT}" \
+      --retries "${RETRIES}" \
+      --no-playlist \
+      -o '%(id)s.%(ext)s' \
+      --print "[ID]: %(id)s.%(ext)s" \
+      "${URL}")"
+
+  printf '%s\n' "${sim_out}"
+
+  VID_ID="$(printf '%s\n' "${sim_out}" | sed -nE 's/^\[ID\]: (.*)\.[^.]+$/\1/p' | head -n1)"
+  [[ -n "${VID_ID}" ]] || die_code "Не удалось определить ID видео." "video_id_error"
+fi
 
 # Формат: предпочитаем h264 ≤720p, далее любой ≤720p, затем любой best.
 # Для наличия ffmpeg пробуем мердж в mp4, если совместимо.
@@ -113,7 +192,7 @@ SIZE_INFO="$(yt-dlp \
     "${MERGE_ARGS[@]}" \
     --cookies "${COOKIES_FILE}" \
     --js-runtimes "deno:${DENO_PATH}" \
-    --no-playlist \
+    "${PLAYLIST_ARGS[@]}" \
     --retries "${RETRIES}" \
     --socket-timeout "${SOCKET_TIMEOUT}" \
     --print "[SIZE]: %(format_id)s|%(filesize)s|%(filesize_approx)s|%(tbr)s|%(duration)s" \
@@ -148,7 +227,7 @@ yt-dlp \
   "${MERGE_ARGS[@]}" \
   --cookies "${COOKIES_FILE}" \
   --js-runtimes "deno:${DENO_PATH}" \
-  --no-playlist \
+  "${PLAYLIST_ARGS[@]}" \
   --quiet \
   --no-warnings \
   --max-filesize "${MAX_SIZE_MB}M" \
