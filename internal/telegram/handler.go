@@ -120,18 +120,39 @@ func (h *Handler) handlePost(ctx context.Context, b BotClient, chatID int64, msg
 }
 
 // sendItem скачивает элемент поста и отправляет его.
-func (h *Handler) sendItem(ctx context.Context, b BotClient, chatID int64, msgID int, link string, index int, domain string, startTime time.Time) {
+func (h *Handler) sendItem(ctx context.Context, b BotClient, chatID int64, msgID int, link string, index int, domain string, startTime time.Time) bool {
 	fileName, err := h.downloadByLink(ctx, b, chatID, msgID, link, index)
 	if err != nil {
 		h.stats.IncrementFailed(chatID, downloadErrorCode(err))
-		return
+		return false
 	}
 	if fileName == "" {
 		h.stats.IncrementFailed(chatID, "download_error")
+		return false
+	}
+
+	return h.sendMedia(ctx, b, chatID, msgID, fileName, domain, startTime)
+}
+
+// sendAllItems скачивает и отправляет все элементы поста по порядку.
+func (h *Handler) sendAllItems(ctx context.Context, b BotClient, chatID int64, msgID int, link, domain string) {
+	items, err := h.downloader.List(ctx, link)
+	if err != nil {
+		EditMessage(ctx, b, chatID, msgID, downloadErrorMessage(err))
+		slog.ErrorContext(ctx, "listing media", "error", err, "chatID", chatID)
+		h.stats.IncrementFailed(chatID, downloadErrorCode(err))
 		return
 	}
 
-	h.sendMedia(ctx, b, chatID, msgID, fileName, domain, startTime)
+	sent := 0
+	for _, item := range items {
+		EditMessage(ctx, b, chatID, msgID, fmt.Sprintf("Скачиваю %d из %d...", item.Index, len(items)))
+		if h.sendItem(ctx, b, chatID, msgID, link, item.Index, domain, time.Now()) {
+			sent++
+		}
+	}
+
+	EditMessage(ctx, b, chatID, msgID, fmt.Sprintf("Готово: %d из %d", sent, len(items)))
 }
 
 // sendPicker показывает инлайн-кнопки для выбора элемента поста.
@@ -141,12 +162,12 @@ func (h *Handler) sendPicker(ctx context.Context, b BotClient, chatID int64, msg
 	buttons := make([]models.InlineKeyboardButton, 0, len(items))
 	for _, item := range items {
 		buttons = append(buttons, models.InlineKeyboardButton{
-			Text:         fmt.Sprintf("%d · %s", item.Index, mediaLabel(item.Kind)),
+			Text:         strconv.Itoa(item.Index),
 			CallbackData: fmt.Sprintf("ig:%s:%d", code, item.Index),
 		})
 	}
 
-	rows := make([][]models.InlineKeyboardButton, 0, (len(buttons)+perRow-1)/perRow)
+	rows := make([][]models.InlineKeyboardButton, 0, (len(buttons)+perRow-1)/perRow+1)
 	for len(buttons) > 0 {
 		n := perRow
 		if len(buttons) < n {
@@ -155,6 +176,11 @@ func (h *Handler) sendPicker(ctx context.Context, b BotClient, chatID int64, msg
 		rows = append(rows, buttons[:n])
 		buttons = buttons[n:]
 	}
+
+	rows = append(rows, []models.InlineKeyboardButton{{
+		Text:         "All",
+		CallbackData: fmt.Sprintf("ig:%s:all", code),
+	}})
 
 	EditMessageWithKeyboard(ctx, b, chatID, msgID,
 		fmt.Sprintf("В посте %d медиа. Выбери, что отправить:", len(items)),
@@ -183,7 +209,7 @@ func (h *Handler) PickMedia(ctx context.Context, b BotClient, update *models.Upd
 		return
 	}
 
-	code, index, ok := parsePickData(cq.Data)
+	code, index, all, ok := parsePickData(cq.Data)
 	if !ok {
 		return
 	}
@@ -192,6 +218,11 @@ func (h *Handler) PickMedia(ctx context.Context, b BotClient, update *models.Upd
 
 	h.stats.TrackChat(chatID, cq.From.Username)
 	ClearKeyboard(ctx, b, chatID, msgID, "Скачиваю...")
+
+	if all {
+		h.sendAllItems(ctx, b, chatID, msgID, link, extractDomain(link))
+		return
+	}
 
 	h.sendItem(ctx, b, chatID, msgID, link, index, extractDomain(link), time.Now())
 }
@@ -291,12 +322,12 @@ func downloadErrorCode(err error) string {
 }
 
 // sendMedia открывает файл, отправляет фото или видео и обновляет статистику.
-func (h *Handler) sendMedia(ctx context.Context, b BotClient, chatID int64, msgID int, fileName, domain string, startTime time.Time) {
+func (h *Handler) sendMedia(ctx context.Context, b BotClient, chatID int64, msgID int, fileName, domain string, startTime time.Time) bool {
 	if fileName == "" || strings.HasSuffix(fileName, ".part") {
 		EditMessage(ctx, b, chatID, msgID, "Не удалось скачать медиа 😢")
 		slog.ErrorContext(ctx, "failing download media", "fileName", fileName)
 		h.stats.IncrementFailed(chatID, "download_error")
-		return
+		return false
 	}
 
 	photo := isImageFile(fileName)
@@ -312,7 +343,7 @@ func (h *Handler) sendMedia(ctx context.Context, b BotClient, chatID int64, msgI
 		EditMessage(ctx, b, chatID, msgID, "Не удалось открыть "+kind+" 😢")
 		slog.ErrorContext(ctx, "opening file", "error", err, "fileName", fileName)
 		h.stats.IncrementFailed(chatID, "open_error")
-		return
+		return false
 	}
 	defer file.Close()
 
@@ -342,7 +373,7 @@ func (h *Handler) sendMedia(ctx context.Context, b BotClient, chatID int64, msgI
 		EditMessage(ctx, b, chatID, msgID, "Не удалось отправить "+kind+" 😢")
 		slog.ErrorContext(ctx, "sending media", "error", svErr, "chatID", chatID)
 		h.stats.IncrementFailed(chatID, "send_error")
-		return
+		return false
 	}
 
 	EditMessage(ctx, b, chatID, msgID, "🎉")
@@ -353,6 +384,8 @@ func (h *Handler) sendMedia(ctx context.Context, b BotClient, chatID int64, msgI
 	if err := h.store.Remove(fn); err != nil {
 		slog.ErrorContext(ctx, "removing file", "error", err, "fileName", fn)
 	}
+
+	return true
 }
 
 // instagramPostCode возвращает shortcode поста Instagram (/p/ или /tv/).
@@ -377,27 +410,23 @@ func instagramPostCode(rawURL string) (string, bool) {
 	return "", false
 }
 
-// parsePickData разбирает callback data вида "ig:<shortcode>:<номер>".
-func parsePickData(data string) (string, int, bool) {
+// parsePickData разбирает callback data вида "ig:<shortcode>:<номер>|all".
+func parsePickData(data string) (string, int, bool, bool) {
 	parts := strings.Split(data, ":")
 	if len(parts) != 3 || parts[0] != "ig" {
-		return "", 0, false
+		return "", 0, false, false
+	}
+
+	if parts[2] == "all" {
+		return parts[1], 0, true, true
 	}
 
 	index, err := strconv.Atoi(parts[2])
 	if err != nil || index < 1 {
-		return "", 0, false
+		return "", 0, false, false
 	}
 
-	return parts[1], index, true
-}
-
-// mediaLabel возвращает подпись типа медиа для кнопки.
-func mediaLabel(kind string) string {
-	if kind == "photo" {
-		return "фото"
-	}
-	return "видео"
+	return parts[1], index, false, true
 }
 
 // isImageFile проверяет, что файл — картинка.

@@ -634,14 +634,19 @@ func TestHandler_Link_InstagramPicker(t *testing.T) {
 	if markup == nil {
 		t.Fatal("expected inline keyboard")
 	}
-	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 3 {
-		t.Fatalf("expected 3 buttons in one row, got %v", markup.InlineKeyboard)
+	if len(markup.InlineKeyboard) != 2 || len(markup.InlineKeyboard[0]) != 3 {
+		t.Fatalf("expected 3 number buttons and an All row, got %v", markup.InlineKeyboard)
 	}
+	wantText := []string{"1", "2", "3"}
 	wantData := []string{"ig:DdJM-xIE2Lx:1", "ig:DdJM-xIE2Lx:2", "ig:DdJM-xIE2Lx:3"}
 	for i, btn := range markup.InlineKeyboard[0] {
-		if btn.CallbackData != wantData[i] {
-			t.Errorf("button %d: got callback %q, want %q", i, btn.CallbackData, wantData[i])
+		if btn.Text != wantText[i] || btn.CallbackData != wantData[i] {
+			t.Errorf("button %d: got %q/%q, want %q/%q", i, btn.Text, btn.CallbackData, wantText[i], wantData[i])
 		}
+	}
+	all := markup.InlineKeyboard[1]
+	if len(all) != 1 || all[0].Text != "All" || all[0].CallbackData != "ig:DdJM-xIE2Lx:all" {
+		t.Errorf("expected All button, got %v", all)
 	}
 }
 
@@ -741,5 +746,87 @@ func TestHandler_PickMedia(t *testing.T) {
 	}
 	if !sentVideo {
 		t.Error("expected video to be sent")
+	}
+}
+
+func TestHandler_PickMedia_All(t *testing.T) {
+	var (
+		indices []int
+		edits   []string
+		sent    int
+	)
+	b := &mockBot{
+		answerCallbackFn: func(ctx context.Context, params *bot.AnswerCallbackQueryParams) (bool, error) {
+			return true, nil
+		},
+		editMessageTextFn: func(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+			edits = append(edits, params.Text)
+			return &models.Message{}, nil
+		},
+		sendVideoFn: func(ctx context.Context, params *bot.SendVideoParams) (*models.Message, error) {
+			sent++
+			return &models.Message{}, nil
+		},
+	}
+	dl := &mockDownloader{
+		listFn: func(ctx context.Context, link string) ([]downloader.Media, error) {
+			return []downloader.Media{
+				{Index: 1, Kind: "photo"},
+				{Index: 2, Kind: "video"},
+			}, nil
+		},
+		downloadItemFn: func(ctx context.Context, link string, index int, progress func(string)) (string, error) {
+			indices = append(indices, index)
+			return "video.mp4", nil
+		},
+	}
+	h := newTestHandler(t, dl, &mockFileStore{})
+	h.PickMedia(context.Background(), b, &models.Update{
+		CallbackQuery: &models.CallbackQuery{
+			ID:   "cb1",
+			From: models.User{ID: 42, Username: "vasya"},
+			Data: "ig:DdJM-xIE2Lx:all",
+			Message: models.MaybeInaccessibleMessage{
+				Type:    models.MaybeInaccessibleMessageTypeMessage,
+				Message: &models.Message{ID: 55, Chat: models.Chat{ID: 100}},
+			},
+		},
+	})
+
+	if len(indices) != 2 || indices[0] != 1 || indices[1] != 2 {
+		t.Errorf("got indices %v, want [1 2]", indices)
+	}
+	if sent != 2 {
+		t.Errorf("got %d sent media, want 2", sent)
+	}
+	if len(edits) == 0 || edits[len(edits)-1] != "Готово: 2 из 2" {
+		t.Errorf("expected final summary, got %v", edits)
+	}
+}
+
+func TestParsePickData(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     string
+		wantCode string
+		wantIdx  int
+		wantAll  bool
+		wantOK   bool
+	}{
+		{"number", "ig:abc:3", "abc", 3, false, true},
+		{"all", "ig:abc:all", "abc", 0, true, true},
+		{"zero", "ig:abc:0", "", 0, false, false},
+		{"bad prefix", "xx:abc:1", "", 0, false, false},
+		{"too many parts", "ig:abc:1:2", "", 0, false, false},
+		{"not a number", "ig:abc:one", "", 0, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, idx, all, ok := parsePickData(tt.data)
+			if code != tt.wantCode || idx != tt.wantIdx || all != tt.wantAll || ok != tt.wantOK {
+				t.Errorf("parsePickData(%q) = %q,%d,%v,%v; want %q,%d,%v,%v",
+					tt.data, code, idx, all, ok, tt.wantCode, tt.wantIdx, tt.wantAll, tt.wantOK)
+			}
+		})
 	}
 }
