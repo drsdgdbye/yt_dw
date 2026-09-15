@@ -119,6 +119,25 @@ func (s *Stats) IncrementFailed(chatID int64, errType string) {
 	}
 }
 
+// Reset обнуляет всю статистику и сразу сохраняет пустое состояние.
+func (s *Stats) Reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.NewChats = 0
+	s.TotalProcessed = 0
+	s.TotalSuccess = 0
+	s.TotalFailed = 0
+	s.PerChat = make(map[int64]*ChatStats)
+	s.TopDomains = make(map[string]int64)
+	s.UserDomains = make(map[string][]string)
+	s.ErrorStats = make(map[string]int64)
+	s.FileSizes = make([]int64, 0)
+	s.ProcessingTimesMs = make([]int64, 0)
+
+	return s.save()
+}
+
 // perChat возвращает (и создаёт при необходимости) статистику для chatID.
 func (s *Stats) perChat(chatID int64) *ChatStats {
 	cs, ok := s.PerChat[chatID]

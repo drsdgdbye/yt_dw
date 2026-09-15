@@ -14,7 +14,7 @@ Telegram-бот (один бинарник, `main.go` в корне): прини
 
 ## Устройство
 
-- `main.go` собирает цепочку: `config` → `logger` → `downloader.New("script/yt_dw.sh")` → `filestore.New("/var/tmp/yt_dw/")` → `stats.New("/var/tmp/yt_dw/stats.json")` → `telegram.NewHandler(...)` → long-polling `go-telegram/bot` (`/start`, `/stats`, префикс `https://`, callback `ig:`, default).
+- `main.go` собирает цепочку: `config` → `logger` → `downloader.New("script/yt_dw.sh")` → `filestore.New("/var/tmp/yt_dw/")` → `stats.New("/var/tmp/yt_dw/stats.json")` → `telegram.NewHandler(...)` → long-polling `go-telegram/bot` (`/start`, `/stats`, `/resetstats`, префикс `https://`, callback `ig:`, default).
 - Пакеты по домену: `internal/downloader` (запуск скрипта), `internal/filestore`, `internal/stats` (JSON, автосейв раз в 30 с и по ctx; username и домены по юзерам для `/stats`), `internal/telegram` (handler/client/messages), `internal/validator`, `internal/logger`.
 - `telegram.BotClient` — интерфейс для ручных моков (`mock_test.go`); `downloader.Downloader` и `filestore.FileStore` — интерфейсы, которые потребляет `telegram`.
 

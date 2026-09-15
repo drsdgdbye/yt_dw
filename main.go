@@ -49,6 +49,9 @@ func main() {
 		bot.WithMessageTextHandler("/stats", bot.MatchTypeExact, func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			h.Stats(ctx, b, update)
 		}),
+		bot.WithMessageTextHandler("/resetstats", bot.MatchTypeExact, func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			h.ResetStats(ctx, b, update)
+		}),
 		bot.WithMessageTextHandler("https://", bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			h.Link(ctx, b, update)
 		}),

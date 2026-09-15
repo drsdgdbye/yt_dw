@@ -550,3 +550,44 @@ func TestReport_UserDomainsLimits(t *testing.T) {
 		t.Errorf("expected at most 20 users in report: %s", report)
 	}
 }
+
+func TestReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stats.json")
+	s := New(path)
+	s.IncrementNewChats()
+	s.IncrementProcessed()
+	s.TrackChat(1, "vasya")
+	s.IncrementSuccess(1, "youtube.com", 100, 1000)
+	s.IncrementFailed(1, "invalid_url")
+
+	if err := s.Reset(); err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+
+	if s.NewChats != 0 || s.TotalProcessed != 0 || s.TotalSuccess != 0 || s.TotalFailed != 0 {
+		t.Errorf("counters not reset: %+v", s)
+	}
+	if len(s.PerChat) != 0 || len(s.TopDomains) != 0 || len(s.UserDomains) != 0 || len(s.ErrorStats) != 0 {
+		t.Errorf("maps not reset: %+v", s)
+	}
+	if len(s.FileSizes) != 0 || len(s.ProcessingTimesMs) != 0 {
+		t.Errorf("slices not reset: %+v", s)
+	}
+
+	s2 := New(path)
+	if s2.NewChats != 0 || s2.TotalProcessed != 0 || len(s2.PerChat) != 0 || len(s2.ErrorStats) != 0 {
+		t.Errorf("reset state not saved: %+v", s2)
+	}
+}
+
+func TestReset_SaveError(t *testing.T) {
+	s := New("/dev/null/stats.json")
+	s.IncrementProcessed()
+
+	if err := s.Reset(); err == nil {
+		t.Error("expected error saving to readonly path")
+	}
+	if s.TotalProcessed != 0 {
+		t.Errorf("memory should be reset, got %d", s.TotalProcessed)
+	}
+}

@@ -242,6 +242,26 @@ func (h *Handler) Stats(ctx context.Context, b BotClient, update *models.Update)
 	SendMessage(ctx, b, update.Message.Chat.ID, report)
 }
 
+// ResetStats — обработчик /resetstats. Обнуляет статистику (только админы).
+func (h *Handler) ResetStats(ctx context.Context, b BotClient, update *models.Update) {
+	if update.Message == nil || update.Message.From == nil {
+		return
+	}
+
+	if !h.isAdmin(update.Message.From.ID) {
+		SendMessage(ctx, b, update.Message.Chat.ID, "Access denied.")
+		return
+	}
+
+	if err := h.stats.Reset(); err != nil {
+		slog.ErrorContext(ctx, "resetting stats", "error", err)
+		SendMessage(ctx, b, update.Message.Chat.ID, "Статистика обнулена, но сохранить не удалось.")
+		return
+	}
+
+	SendMessage(ctx, b, update.Message.Chat.ID, "Статистика обнулена.")
+}
+
 // isAdmin проверяет, есть ли userID в списке администраторов.
 func (h *Handler) isAdmin(userID int64) bool {
 	for _, id := range h.adminIDs {

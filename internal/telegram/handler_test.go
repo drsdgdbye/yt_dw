@@ -830,3 +830,66 @@ func TestParsePickData(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_ResetStats_NilMessage(t *testing.T) {
+	b := &mockBot{
+		sendMessageFn: func(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+			t.Error("unexpected call")
+			return nil, nil
+		},
+	}
+	h := newTestHandler(t, &mockDownloader{}, &mockFileStore{})
+	h.ResetStats(context.Background(), b, &models.Update{})
+}
+
+func TestHandler_ResetStats_AccessDenied(t *testing.T) {
+	var sentText string
+	b := &mockBot{
+		sendMessageFn: func(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+			sentText = params.Text
+			return &models.Message{}, nil
+		},
+	}
+	st := stats.New(filepath.Join(t.TempDir(), "stats.json"))
+	st.IncrementProcessed()
+	h := NewHandler(&mockDownloader{}, &mockFileStore{}, st, []int64{42})
+	h.ResetStats(context.Background(), b, &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 999},
+			Chat: models.Chat{ID: 1},
+		},
+	})
+
+	if sentText != "Access denied." {
+		t.Errorf("got %q, want 'Access denied.'", sentText)
+	}
+	if st.TotalProcessed != 1 {
+		t.Errorf("stats should not be reset, got %d", st.TotalProcessed)
+	}
+}
+
+func TestHandler_ResetStats_Success(t *testing.T) {
+	var sentText string
+	b := &mockBot{
+		sendMessageFn: func(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+			sentText = params.Text
+			return &models.Message{}, nil
+		},
+	}
+	st := stats.New(filepath.Join(t.TempDir(), "stats.json"))
+	st.IncrementProcessed()
+	h := NewHandler(&mockDownloader{}, &mockFileStore{}, st, []int64{42})
+	h.ResetStats(context.Background(), b, &models.Update{
+		Message: &models.Message{
+			From: &models.User{ID: 42},
+			Chat: models.Chat{ID: 1},
+		},
+	})
+
+	if sentText != "Статистика обнулена." {
+		t.Errorf("got %q, want %q", sentText, "Статистика обнулена.")
+	}
+	if st.TotalProcessed != 0 {
+		t.Errorf("stats not reset, got %d", st.TotalProcessed)
+	}
+}

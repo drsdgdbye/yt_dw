@@ -15,6 +15,7 @@ Limits: ≤720p, ≤50MB, mp4 without re-encoding; powered by yt-dlp
 
 - `/start` — greeting
 - `/stats` — statistics (admins only, see `admin_ids`)
+- `/resetstats` — reset statistics (admins only)
 - send a link — download and delivery of the video
 
 ## Quick start (Docker, ghcr.io)
